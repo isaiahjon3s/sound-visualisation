@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Visualizer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+        }
+        
+        header {
+            width: 100%;
+            text-align: center;
+            padding: 1rem 0;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 2rem;
+            color: #1DB954;
+        }
+        
+        #controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 1rem 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            background-color: #1DB954;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #169c45;
+        }
+        
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            flex-grow: 1;
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #visualizer-selector {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 5px;
+            border-radius: 4px;
+        }
+        
+        .message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 1.5rem;
+            color: rgba(255, 255, 255, 0.8);
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 1rem;
+            border-radius: 8px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Audio Visualizer</h1>
+    </header>
+    
+    <div id="controls">
+        <button id="micButton">Use Microphone</button>
+        <button id="fileButton">Upload Audio</button>
+        <input type="file" id="fileInput" accept="audio/*">
+        <button id="stopButton" disabled>Stop</button>
+    </div>
+    
+    <div id="canvas-container">
+        <canvas id="visualizer"></canvas>
+        <div id="visualizer-selector">
+            <select id="visualizer-type">
+                <option value="bars">Bars</option>
+                <option value="circles">Circles</option>
+                <option value="wave">Wave</option>
+                <option value="particles">Particles</option>
+            </select>
+        </div>
+        <div id="startMessage" class="message">Click "Use Microphone" or "Upload Audio" to start</div>
+    </div>
+    
+    <script>
+        // Global variables
+        let audioContext;
+        let analyser;
+        let source;
+        let animationId;
+        let canvas = document.getElementById('visualizer');
+        let canvasCtx = canvas.getContext('2d');
+        let currentVisualizer = 'bars';
+        let particles = [];
+        
+        // Buttons
+        const micButton = document.getElementById('micButton');
+        const fileButton = document.getElementById('fileButton');
+        const fileInput = document.getElementById('fileInput');
+        const stopButton = document.getElementById('stopButton');
+        const visualizerType = document.getElementById('visualizer-type');
+        const startMessage = document.getElementById('startMessage');
+        
+        // Show start message
+        startMessage.style.display = 'block';
+        
+        // Resize canvas to fill window
+        function resizeCanvas() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+        }
+        
+        // Call resize initially and on window resize
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Set up audio context
+        function setupAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+            }
+            
+            startMessage.style.display = 'none';
+            stopButton.disabled = false;
+            
+            // Start visualization
+            visualize();
+        }
+        
+        // Microphone input
+        micButton.addEventListener('click', () => {
+            if (navigator.mediaDevices) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        if (source) {
+                            source.disconnect();
+                        }
+                        
+                        setupAudioContext();
+                        source = audioContext.createMediaStreamSource(stream);
+                        source.connect(analyser);
+                    })
+                    .catch(err => {
+                        console.error('Error accessing microphone:', err);
+                        alert('Could not access microphone. Please check your permissions.');
+                    });
+            } else {
+                alert('Your browser does not support audio input.');
+            }
+        });
+        
+        // File input
+        fileButton.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    if (source) {
+                        source.disconnect();
+                    }
+                    
+                    setupAudioContext();
+                    audioContext.decodeAudioData(e.target.result)
+                        .then(buffer => {
+                            source = audioContext.createBufferSource();
+                            source.buffer = buffer;
+                            source.connect(analyser);
+                            analyser.connect(audioContext.destination);
+                            source.start(0);
+                        })
+                        .catch(err => {
+                            console.error('Error decoding audio:', err);
+                            alert('Error decoding audio file.');
+                        });
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+        
+        // Stop button
+        stopButton.addEventListener('click', () => {
+            if (source) {
+                source.disconnect();
+                source = null;
+            }
+            
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            
+            startMessage.style.display = 'block';
+            stopButton.disabled = true;
+            
+            // Clear canvas
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+        
+        // Visualizer type
+        visualizerType.addEventListener('change', (event) => {
+            currentVisualizer = event.target.value;
+        });
+        
+        // Bars visualizer
+        function drawBars(dataArray, bufferLength) {
+            const barWidth = canvas.width / bufferLength * 2.5;
+            const barSpacing = 2;
+            let x = 0;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = dataArray[i] * 1.5;
+                
+                // Generate colors based on frequency
+                const hue = (i / bufferLength) * 360;
+                const saturation = 100;
+                const lightness = 50;
+                
+                canvasCtx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + barSpacing;
+            }
+        }
+        
+        // Circles visualizer
+        function drawCircles(dataArray, bufferLength) {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) * 0.8;
+            
+            for (let i = 0; i < bufferLength; i += 4) {
+                const angle = (i / bufferLength) * Math.PI * 2;
+                const amplitude = dataArray[i] * 1.5;
+                
+                const x = centerX + Math.cos(angle) * (radius + amplitude);
+                const y = centerY + Math.sin(angle) * (radius + amplitude);
+                
+                const hue = (i / bufferLength) * 360;
+                
+                canvasCtx.beginPath();
+                canvasCtx.arc(x, y, 5, 0, Math.PI * 2);
+                canvasCtx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                canvasCtx.fill();
+                
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(centerX, centerY);
+                canvasCtx.lineTo(x, y);
+                canvasCtx.strokeStyle = `hsla(${hue}, 100%, 50%, 0.5)`;
+                canvasCtx.stroke();
+            }
+        }
+        
+        // Wave visualizer
+        function drawWave(dataArray, bufferLength) {
+            const sliceWidth = canvas.width / bufferLength;
+            let x = 0;
+            
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(0, canvas.height / 2);
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = v * canvas.height / 2;
+                
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+                
+                x += sliceWidth;
+            }
+            
+            canvasCtx.lineTo(canvas.width, canvas.height / 2);
+            
+            // Create gradient
+            const gradient = canvasCtx.createLinearGradient(0, 0, canvas.width, 0);
+            gradient.addColorStop(0, '#ff0000');
+            gradient.addColorStop(0.2, '#ff7f00');
+            gradient.addColorStop(0.4, '#ffff00');
+            gradient.addColorStop(0.6, '#00ff00');
+            gradient.addColorStop(0.8, '#0000ff');
+            gradient.addColorStop(1, '#8b00ff');
+            
+            canvasCtx.strokeStyle = gradient;
+            canvasCtx.lineWidth = 2;
+            canvasCtx.stroke();
+        }
+        
+        // Particle class
+        class Particle {
+            constructor(x, y, size, color) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.color = color;
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 3,
+                    y: (Math.random() - 0.5) * 3
+                };
+                this.opacity = 1;
+            }
+            
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.opacity -= 0.01;
+                this.size -= 0.1;
+            }
+            
+            draw() {
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                canvasCtx.fillStyle = `hsla(${this.color}, 100%, 50%, ${this.opacity})`;
+                canvasCtx.fill();
+            }
+        }
+        
+        // Particles visualizer
+        function drawParticles(dataArray, bufferLength) {
+            // Create new particles based on audio data
+            const average = dataArray.reduce((acc, val) => acc + val, 0) / bufferLength;
+            const threshold = 50;
+            
+            if (average > threshold) {
+                const particleCount = Math.floor(average / 10);
+                
+                for (let i = 0; i < particleCount; i++) {
+                    const x = Math.random() * canvas.width;
+                    const y = Math.random() * canvas.height;
+                    const size = Math.random() * 5 + 2;
+                    const color = Math.floor(Math.random() * 360);
+                    
+                    particles.push(new Particle(x, y, size, color));
+                }
+            }
+            
+            // Update and draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                
+                if (particles[i].opacity <= 0 || particles[i].size <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+        
+        // Main visualization function
+        function visualize() {
+            animationId = requestAnimationFrame(visualize);
+            
+            if (!analyser) return;
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Clear canvas
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            canvasCtx.fillStyle = '#121212';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Choose visualization type
+            switch (currentVisualizer) {
+                case 'bars':
+                    drawBars(dataArray, bufferLength);
+                    break;
+                case 'circles':
+                    drawCircles(dataArray, bufferLength);
+                    break;
+                case 'wave':
+                    drawWave(dataArray, bufferLength);
+                    break;
+                case 'particles':
+                    drawParticles(dataArray, bufferLength);
+                    break;
+                default:
+                    drawBars(dataArray, bufferLength);
+            }
+        }
+    </script>
+</body>
+</html>
